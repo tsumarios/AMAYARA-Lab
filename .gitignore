@@ -133,3 +133,6 @@ dmypy.json
 
 # APKs
 files/*.apk
+
+# Secrets
+secret.sh

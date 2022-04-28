@@ -3,15 +3,49 @@
 
 import os
 import json
+import requests
 import yara
 from hashlib import md5, sha1, sha256
 from zipfile import ZipFile
 
+# Virus Total setup
+VT_API_KEY = os.environ.get('VT_API_KEY')
+
+
+def get_virus_total_stats(file, md5_digest):
+    """
+    Return Virus Total statistics for the file.
+    """
+    result = {}
+
+    # Get file report (if exists)
+    url_report = f'https://www.virustotal.com/api/v3/files/{md5_digest}'
+    headers_report = {'Accept': 'application/json', 'x-apikey': VT_API_KEY}
+    response = requests.get(url_report, headers=headers_report)
+
+    # If the file report does not exist, upload the file and analyse it
+    if response.status_code == 404:
+        url_upload = 'https://www.virustotal.com/api/v3/files'
+        files_upload = {'file': (file, open(file, 'rb'))}
+        headers_upload = {'x-apikey': VT_API_KEY}
+        response = requests.post(url_upload, files=files_upload, headers=headers_upload)
+        # Then get file report
+        response = requests.get(url_report, headers=headers_report)
+
+    # Return desired info from the analysis object
+    result['report_url'] = f'https://www.virustotal.com/gui/file/{md5_digest}'
+    result['suggested_threat_label'] = response.json().get('data', {}).get('attributes', {}).get('popular_threat_classification', {}).get('suggested_threat_label')
+    result['last_analysis_stats'] = response.json().get('data', {}).get('attributes', {}).get('last_analysis_stats')
+    return result
+
 
 def get_file_digests(file):
+    """
+    Return the md5, sha1 and sha256 digests for a file.
+    """
     md5_digest, sha1_digest, sha256_digest = md5(), sha1(), sha256()
 
-    with open(file, "rb") as f:
+    with open(file, 'rb') as f:
         # Read and update hash in chunks of 4K
         for byte_block in iter(lambda: f.read(4096), b''):
             md5_digest.update(byte_block)
@@ -39,6 +73,9 @@ rules = yara.compile(filepaths=rules_paths)
 
 
 def rules_scanner(file):
+    """
+    Scan a file using the YARA rules in the /rules folder (including subfolders).
+    """
     results = {}
     for match in rules.match(file):
         strings_list = []
@@ -53,12 +90,15 @@ def rules_scanner(file):
 
 
 def analyse_files_in_apk(apk_file):
+    """
+    Analyse all the files in an apk.
+    """
     results = {}
     # Extract the APK file into a temporary directory
     with ZipFile(apk_file, 'r') as zipObj:
         zipObj.extractall('tmp')
         # Iterate all over the extracted files
-        for root, dirs, files in os.walk("tmp", topdown=False):
+        for root, dirs, files in os.walk('tmp', topdown=False):
             for name in files:
                 file_path = os.path.join(root, name)
                 # Get results for the current file
@@ -75,14 +115,20 @@ def analyse_files_in_apk(apk_file):
 
 
 def analyse_apk(apk_file):
-    # Initialise results with file info and digets
+    """
+    Analyse an apk file and stores the results into a JSON file under the /results folder.
+    """
+    # Initialise results with file info, digests and VT stats
     md5_digest, sha1_digest, sha256_digest = get_file_digests(apk_file)
-    results = {'file_name': os.path.basename(apk_file), 'digests': {'md5': md5_digest.hexdigest(),
-               'sha1': sha1_digest.hexdigest(), 'sha256': sha256_digest.hexdigest()}, 'result': {}}
+    vt_stats = get_virus_total_stats(apk_file, md5_digest.hexdigest())
+    results = {'file_name': os.path.basename(apk_file),
+               'digests': {'md5': md5_digest.hexdigest(), 'sha1': sha1_digest.hexdigest(), 'sha256': sha256_digest.hexdigest()},
+               'vt_stats': vt_stats, 'pithus_report_url': f'https://beta.pithus.org/report/{sha256_digest.hexdigest()}',
+               'yara_results': {}}
 
     # Scan APK and its content
-    results['result']['apk'] = rules_scanner(apk_file) or {}
-    results['result']['apk_content'] = analyse_files_in_apk(apk_file) or {}
+    results['yara_results']['apk'] = rules_scanner(apk_file) or {}
+    results['yara_results']['apk_content'] = analyse_files_in_apk(apk_file) or {}
 
     # Save and print results
     with open(f'./results/result_{md5_digest.hexdigest()}.json', 'w') as json_file:
