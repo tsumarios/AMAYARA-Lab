@@ -19,9 +19,10 @@ rule Joker_Payload2: Joker Payload2 {
     date        = "2022-04-23"
 
   strings:
-    $payload = { 61 73 73 65 74 73 2f 36 32 76 72 72 35 71 71 71 36 } // assets/62vrr5qqq6
-    $net = "MF8zXzEgbGlrZSBNYWMgT1MgWCkgQXBwbGVXZWJLaXQvNjAzLjEuMzAgKEtIVE1MLCBs" // s://fibvdk77pp.s3.us-east-1.amazonaws.com/agfwot6tm1
+    $payload = { 6173736574732f36327672723571717136 } // assets/62vrr5qqq6
+    $net1 = "MF8zXzEgbGlrZSBNYWMgT1MgWCkgQXBwbGVXZWJLaXQvNjAzLjEuMzAgKEtIVE1MLCBs" // s://fibvdk77pp.s3.us-east-1.amazonaws.com/agfwot6tm1
+    $net2 = { 68747470733a2f2f637574742e6c792f6c4173634762304e64 }  // https://cutt.ly/lAscGb0Nd
   
   condition:
-    (uint16be(0) == 0x504b and $payload) or ($net)
+    (uint16be(0) == 0x504b and $payload) or ($net1 or $net2)
 }

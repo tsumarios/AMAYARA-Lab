@@ -6,20 +6,48 @@ import json
 import requests
 import yara
 from hashlib import md5, sha1, sha256
+from time import sleep
 from zipfile import ZipFile
 
-# Virus Total setup
-VT_API_KEY = os.environ.get('VT_API_KEY')
+
+MB_API_KEY = os.environ.get('MB_API_KEY')  # Malware Bazaar API key
+VT_API_KEY = os.environ.get('VT_API_KEY')  # Virus Total API key
 
 
-def get_virus_total_stats(file, md5_digest):
+def get_malware_bazaar_stats(sha256_digest):
+    """
+    Return Malware Bazaar statistics for the file.
+    """
+    result = {}
+
+    # Get file report (if exists)
+    url = f'https://mb-api.abuse.ch/api/v1/'
+    headers = {'Accept': 'application/json', 'API-KEY': MB_API_KEY}
+    data = {'query': 'get_info', 'hash': sha256_digest}
+    response = requests.post(url, headers=headers, data=data)
+    response_json = response.json()
+
+    # If the file report does not exist, just return None
+    if response_json['query_status'] == 'hash_not_found':
+        return None
+
+    data = response_json['data'][0]
+    result['report_url'] = f'https://bazaar.abuse.ch/sample/{sha256_digest}'
+    result['yara_rules'] = data.get('yara_rules')
+    result['delivery_method'] = data.get('delivery_method')
+    result['intelligence'] = data.get('intelligence', {}).get('clamav')
+
+    return result
+
+
+def get_virus_total_stats(file, sha256_digest):
     """
     Return Virus Total statistics for the file.
     """
     result = {}
 
     # Get file report (if exists)
-    url_report = f'https://www.virustotal.com/api/v3/files/{md5_digest}'
+    url_report = f'https://www.virustotal.com/api/v3/files/{sha256_digest}'
     headers_report = {'Accept': 'application/json', 'x-apikey': VT_API_KEY}
     response = requests.get(url_report, headers=headers_report)
 
@@ -33,7 +61,7 @@ def get_virus_total_stats(file, md5_digest):
         response = requests.get(url_report, headers=headers_report)
 
     # Return desired info from the analysis object
-    result['report_url'] = f'https://www.virustotal.com/gui/file/{md5_digest}'
+    result['report_url'] = f'https://www.virustotal.com/gui/file/{sha256_digest}'
     result['suggested_threat_label'] = response.json().get('data', {}).get('attributes', {}).get('popular_threat_classification', {}).get('suggested_threat_label')
     result['last_analysis_stats'] = response.json().get('data', {}).get('attributes', {}).get('last_analysis_stats')
     return result
@@ -118,12 +146,13 @@ def analyse_apk(apk_file):
     """
     Analyse an apk file and stores the results into a JSON file under the /results folder.
     """
-    # Initialise results with file info, digests and VT stats
+    # Initialise results with file info, digests, VT stats and MB stats
     md5_digest, sha1_digest, sha256_digest = get_file_digests(apk_file)
-    vt_stats = get_virus_total_stats(apk_file, md5_digest.hexdigest())
+    vt_stats = get_virus_total_stats(apk_file, sha256_digest.hexdigest())
+    mb_stats = get_malware_bazaar_stats(sha256_digest.hexdigest())
     results = {'file_name': os.path.basename(apk_file),
                'digests': {'md5': md5_digest.hexdigest(), 'sha1': sha1_digest.hexdigest(), 'sha256': sha256_digest.hexdigest()},
-               'vt_stats': vt_stats, 'pithus_report_url': f'https://beta.pithus.org/report/{sha256_digest.hexdigest()}',
+               'vt_stats': vt_stats, 'mb_stats': mb_stats, 'pithus_report_url': f'https://beta.pithus.org/report/{sha256_digest.hexdigest()}',
                'yara_results': {}}
 
     # Scan APK and its content
@@ -139,6 +168,7 @@ def analyse_apk(apk_file):
 def main():
     for apk_file in apk_files.values():
         analyse_apk(apk_file)
+        sleep(10)
 
 
 if __name__ == '__main__':
